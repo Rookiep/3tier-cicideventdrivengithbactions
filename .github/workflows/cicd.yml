@@ -10,7 +10,7 @@ env:
 
 jobs:
 
-# ---------------- SAST (CodeQL) ----------------
+  # ---------------- SAST (CodeQL) ----------------
   sast-codeql:
     runs-on: ubuntu-latest
     permissions:
@@ -31,8 +31,7 @@ jobs:
       - name: CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-
-# ---------------- Dependency Scan (Snyk) ----------------
+  # ---------------- Dependency Scan (Snyk) ----------------
   dependency-scan:
     runs-on: ubuntu-latest
 
@@ -70,17 +69,16 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-
-# ---------------- Secrets Scan ----------------
+  # ---------------- Secrets Scan ----------------
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Gitleaks Scan
         uses: gitleaks/gitleaks-action@v2
 
-
-# ---------------- Build + Test + Scan + Push ----------------
+  # ---------------- Build + Test + Scan + Push ----------------
   build-test-scan-push:
     needs: [sast-codeql, dependency-scan, secrets-scan]
     runs-on: ubuntu-latest
@@ -114,23 +112,20 @@ jobs:
         working-directory: app/worker
         run: npm test || true
 
-
-      # ---------------- SonarCloud ----------------
+      # ---------------- SonarCloud -----------------
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.projectKey=event-driven-3tier
+            -Dsonar.projectKey=Rookiep_3tier-cicideventdrivengithbactions
+            -Dsonar.organization=Rookiep
             -Dsonar.sources=app
-            -Dsonar.organization=rookiep
-
 
       # ---------------- Docker Login ----------------
       - name: Docker login GHCR
         run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
 
       # ---------------- Build Images ----------------
       - name: Build API Image
@@ -141,7 +136,6 @@ jobs:
 
       - name: Build Frontend Image
         run: docker build -t ghcr.io/${{ github.repository }}/frontend:latest ./app/frontend
-
 
       # ---------------- Trivy Scan ----------------
       - name: Trivy scan API
@@ -159,7 +153,6 @@ jobs:
         with:
           image-ref: ghcr.io/${{ github.repository }}/frontend:latest
 
-
       # ---------------- Push Images ----------------
       - name: Push API image
         run: docker push ghcr.io/${{ github.repository }}/api:latest
@@ -170,8 +163,7 @@ jobs:
       - name: Push Frontend image
         run: docker push ghcr.io/${{ github.repository }}/frontend:latest
 
-
-# ---------------- DAST ----------------
+  # ---------------- DAST ---------------- 
   dast-owasp:
     needs: build-test-scan-push
     runs-on: ubuntu-latest
@@ -180,23 +172,22 @@ jobs:
       - name: OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: "https://example.com"   # replace with deployed service URL
+          target: "https://example.com"   # ← replace with your actual deployed service URL
 
-
-# ---------------- Policy Gates ----------------
+  # ---------------- Policy Gates ----------------
   policy-gates:
     needs: dast-owasp
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
       - name: OPA Conftest policy check
         uses: instrumenta/conftest-action@v0.3.0
         with:
           files: helm-charts/
 
-
-# ---------------- GitOps Trigger ----------------
+  # ---------------- GitOps Trigger ----------------
   gitops-update:
     needs: policy-gates
     runs-on: ubuntu-latest
