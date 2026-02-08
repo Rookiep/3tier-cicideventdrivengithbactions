@@ -120,7 +120,7 @@ jobs:
         with:
           args: >
             -Dsonar.projectKey=Rookiep_3tier-cicideventdrivengithbactions
-            -Dsonar.organization=Rookiep
+            -Dsonar.organization=rookiep
             -Dsonar.sources=app
 
       # ---------------- Docker Login ----------------
