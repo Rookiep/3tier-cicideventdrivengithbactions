@@ -1,0 +1,25 @@
+
+version: '3'
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  api:
+    build: ./app/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - rabbitmq
+
+  worker:
+    build: ./app/worker
+    depends_on:
+      - rabbitmq
+
+  frontend:
+    build: ./app/frontend
+    ports:
+      - "8080:80"

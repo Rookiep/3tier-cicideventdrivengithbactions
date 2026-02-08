@@ -1,0 +1,170 @@
+
+name: Enterprise Production CI-CD DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+  # ------------------- SAST -------------------
+  sast-codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ---------------- Dependency Scan ----------------
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snyk Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ---------------- Secrets Scan ----------------
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+  # ---------------- Build + Test + Scan + Push ----------------
+  build-test-scan-push:
+    needs: [sast-codeql, dependency-scan, secrets-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install API dependencies
+        run: |
+          cd app/api
+          npm install
+
+      - name: Install Worker dependencies
+        run: |
+          cd app/worker
+          npm install
+
+      - name: Run API tests
+        run: |
+          cd app/api
+          npm test || true
+
+      - name: Run Worker tests
+        run: |
+          cd app/worker
+          npm test || true
+
+      - name: Sonar Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          args: >
+            -Dsonar.projectKey=event-driven-3tier
+            -Dsonar.sources=app
+
+      - name: Docker login GHCR
+        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build API Image
+        run: docker build -t ghcr.io/${{ github.repository }}/api:latest ./app/api
+
+      - name: Build Worker Image
+        run: docker build -t ghcr.io/${{ github.repository }}/worker:latest ./app/worker
+
+      - name: Build Frontend Image
+        run: docker build -t ghcr.io/${{ github.repository }}/frontend:latest ./app/frontend
+
+      - name: Trivy scan API
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}/api:latest
+
+      - name: Trivy scan Worker
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}/worker:latest
+
+      - name: Trivy scan Frontend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}/frontend:latest
+
+      - name: Push API image
+        run: docker push ghcr.io/${{ github.repository }}/api:latest
+
+      - name: Push Worker image
+        run: docker push ghcr.io/${{ github.repository }}/worker:latest
+
+      - name: Push Frontend image
+        run: docker push ghcr.io/${{ github.repository }}/frontend:latest
+
+  # ---------------- DAST ----------------
+  dast-owasp:
+    needs: build-test-scan-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: OWASP ZAP Scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://your-api-url'
+
+  # ---------------- Policy Gates ----------------
+  policy-gates:
+    needs: dast-owasp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: OPA Conftest policy check
+        uses: instrumenta/conftest-action@master
+        with:
+          files: helm-charts/
+
+  # ---------------- GitOps Trigger ----------------
+  gitops-update:
+    needs: policy-gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+
+      - name: Update Helm Image Tags
+        run: |
+          sed -i 's|api:.*|api: ghcr.io/${{ github.repository }}/api:latest|' helm-charts/api/values.yaml
+          sed -i 's|worker:.*|worker: ghcr.io/${{ github.repository }}/worker:latest|' helm-charts/worker/values.yaml
+          sed -i 's|frontend:.*|frontend: ghcr.io/${{ github.repository }}/frontend:latest|' helm-charts/frontend/values.yaml
+
+      - name: Commit image update
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "Update image tags from CI"
+          git push

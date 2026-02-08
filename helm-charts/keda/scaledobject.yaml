@@ -1,0 +1,14 @@
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rabbitmq-scaler
+spec:
+  scaleTargetRef:
+    name: worker
+  triggers:
+  - type: rabbitmq
+    metadata:
+      queueName: tasks
+      host: amqp://rabbitmq
+      queueLength: "5"
